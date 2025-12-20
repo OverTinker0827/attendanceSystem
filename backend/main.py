@@ -499,10 +499,31 @@ async def health_check():
 # ============================================================================
 
 if __name__ == "__main__":
-    # Run with HTTP (SSL disabled for development)
-    uvicorn.run(
-        "main:app",
-        host=config.HOST,
-        port=config.PORT,
-        reload=True  # Enable auto-reload during development
-    )
+    # Run with HTTPS (required for webcam access)
+    import os
+    
+    # Check if SSL certificates exist
+    cert_file = os.path.join(os.path.dirname(__file__), "..", "certs", "cert.pem")
+    key_file = os.path.join(os.path.dirname(__file__), "..", "certs", "key.pem")
+    
+    if os.path.exists(cert_file) and os.path.exists(key_file):
+        # Run with HTTPS
+        uvicorn.run(
+            "main:app",
+            host=config.HOST,
+            port=config.PORT,
+            reload=True,
+            ssl_certfile=cert_file,
+            ssl_keyfile=key_file
+        )
+    else:
+        # Fallback to HTTP with warning
+        print("⚠️  WARNING: SSL certificates not found!")
+        print("⚠️  Webcam access requires HTTPS. Generate certificates with:")
+        print("   cd certs && python generate_certs.py")
+        uvicorn.run(
+            "main:app",
+            host=config.HOST,
+            port=config.PORT,
+            reload=True
+        )

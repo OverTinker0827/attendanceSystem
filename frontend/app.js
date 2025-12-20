@@ -218,7 +218,7 @@ async function submitRegistration() {
     isCapturing = false;
     stopWebcam();
     
-    progressText.textContent = 'Submitting registration...';
+    progressText.textContent = '📤 Submitting registration...';
     
     try {
         const studentId = getStudentId();
@@ -227,12 +227,33 @@ async function submitRegistration() {
             embeddings: capturedEmbeddings
         });
         
-        showMessage(CONFIG.MESSAGES.REGISTRATION_SUCCESS, false);
+        playSuccessSound();
+        showDetailedMessage(
+            '✅ Registration Successful!',
+            `<div class="feedback-success-icon">✓</div>
+            <strong>Student ID:</strong> ${studentId}<br>
+            <strong>Face Images Captured:</strong> ${CONFIG.NUM_REGISTRATION_IMAGES}<br>
+            <strong>Status:</strong> Ready for attendance<br><br>
+            <div class="feedback-note">You can now mark your attendance using the "Mark Attendance" button</div>`,
+            'success'
+        );
         showSection('welcome');
         attendanceBtn.disabled = false;
         
     } catch (error) {
-        showMessage(`Registration failed: ${error.message}`, true);
+        playErrorSound();
+        showDetailedMessage(
+            '❌ Registration Failed',
+            `<div class="feedback-error-icon">✗</div>
+            <strong>Error:</strong> ${error.message}<br><br>
+            <strong>Possible causes:</strong><br>
+            • Student ID already registered<br>
+            • Invalid face embeddings<br>
+            • Server connection issue<br><br>
+            <strong>Action Required:</strong><br>
+            Please try again or contact support if the problem persists.`,
+            'error'
+        );
         showSection('welcome');
     }
 }
@@ -302,7 +323,11 @@ async function visualizeFaceDetection() {
  */
 async function verifyAttendance() {
     verifyBtn.disabled = true;
-    verifyBtn.textContent = 'Verifying...';
+    verifyBtn.textContent = '🔄 Verifying...';
+    
+    // Show processing indicator
+    const statusElement = document.getElementById('verification-status');
+    statusElement.textContent = '🔄 Analyzing face...';
     
     try {
         // Generate live embedding
@@ -310,11 +335,18 @@ async function verifyAttendance() {
         const studentId = getStudentId();
         
         if (!liveEmbedding) {
-            showMessage(CONFIG.MESSAGES.FACE_NOT_DETECTED, true);
+            showDetailedMessage(
+                '⚠️ No Face Detected',
+                'Please ensure your face is clearly visible in the frame.\n\n📍 Tips:\n• Face the camera directly\n• Ensure good lighting\n• Remove any obstructions',
+                'warning'
+            );
             verifyBtn.disabled = false;
             verifyBtn.textContent = 'Verify & Mark Attendance';
+            statusElement.textContent = 'Position your face in the frame and click Verify';
             return;
         }
+        
+        statusElement.textContent = '🔄 Comparing with registered profile...';
         
         // Submit to backend
         const response = await apiCall('/api/verify', 'POST', {
@@ -325,39 +357,89 @@ async function verifyAttendance() {
         // Handle response with detailed feedback
         if (response.status === 'ok') {
             const timestamp = new Date().toLocaleTimeString();
+            const date = new Date().toLocaleDateString();
             const confidence = response.confidence ? (response.confidence * 100).toFixed(1) : 'N/A';
             const matches = response.matches_found || 'N/A';
             
+            playSuccessSound();
             showDetailedMessage(
-                '✓ Attendance Marked Successfully!',
-                `Student: ${studentId}\nTime: ${timestamp}\nConfidence: ${confidence}%\nMatches: ${matches}/5`,
+                '✅ Attendance Marked Successfully!',
+                `<div class="feedback-success-icon">✓</div>
+                <strong>Student ID:</strong> ${studentId}<br>
+                <strong>Date:</strong> ${date}<br>
+                <strong>Time:</strong> ${timestamp}<br>
+                <strong>Verification Confidence:</strong> ${confidence}%<br>
+                <strong>Face Matches:</strong> ${matches}/5<br><br>
+                <div class="feedback-note">✓ Your attendance has been recorded</div>`,
                 'success'
             );
         } else if (response.status === 'already_marked') {
             const markedTime = response.marked_at ? new Date(response.marked_at).toLocaleTimeString() : 'earlier today';
+            const markedDate = response.marked_at ? new Date(response.marked_at).toLocaleDateString() : 'today';
+            
+            playInfoSound();
             showDetailedMessage(
-                'Already Marked',
-                `You already marked attendance at ${markedTime}`,
+                'ℹ️ Already Marked',
+                `<div class="feedback-info-icon">ℹ️</div>
+                You have already marked attendance today.<br><br>
+                <strong>Previously marked at:</strong><br>
+                📅 ${markedDate}<br>
+                🕐 ${markedTime}<br><br>
+                <div class="feedback-note">You can only mark attendance once per day</div>`,
                 'info'
             );
         } else if (response.status === 'not_registered') {
+            playErrorSound();
             showDetailedMessage(
-                '✗ Not Registered',
-                `Student ID ${studentId} is not registered.\nPlease register first using the Register button.`,
+                '❌ Not Registered',
+                `<div class="feedback-error-icon">✗</div>
+                <strong>Student ID:</strong> ${studentId}<br><br>
+                This student ID is not registered in the system.<br><br>
+                <strong>Action Required:</strong><br>
+                1. Click "Cancel" to go back<br>
+                2. Click "Register New Student" button<br>
+                3. Complete the face registration process`,
                 'error'
             );
         } else if (response.status === 'verification_failed') {
             const confidence = response.best_match ? (response.best_match * 100).toFixed(1) : '0.0';
+            const threshold = 80;
             const matches = response.matches_found || 0;
+            const requiredMatches = 2;
+            
+            playErrorSound();
             showDetailedMessage(
-                '✗ Verification Failed',
-                `Face does not match registered profile.\nBest Match: ${confidence}% (Need: 80%)\nMatches: ${matches}/5 (Need: 2/5)\n\nPlease try again with better lighting and face positioning.`,
+                '❌ Face Verification Failed',
+                `<div class="feedback-error-icon">✗</div>
+                Your face does not match the registered profile.<br><br>
+                <div class="verification-details">
+                    <div class="detail-row">
+                        <span class="detail-label">Best Match Score:</span>
+                        <span class="detail-value ${confidence >= threshold ? 'pass' : 'fail'}">${confidence}%</span>
+                        <span class="detail-required">(Need: ${threshold}%)</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Face Matches:</span>
+                        <span class="detail-value ${matches >= requiredMatches ? 'pass' : 'fail'}">${matches}/5</span>
+                        <span class="detail-required">(Need: ${requiredMatches}/5)</span>
+                    </div>
+                </div><br>
+                <strong>💡 Tips to improve verification:</strong><br>
+                • Ensure good lighting on your face<br>
+                • Position your face in the center of frame<br>
+                • Remove glasses if you didn't wear them during registration<br>
+                • Face the camera directly<br>
+                • Try again in a few seconds<br><br>
+                <div class="feedback-note">If problems persist, you may need to re-register</div>`,
                 'error'
             );
         } else {
+            playErrorSound();
             showDetailedMessage(
-                '✗ Verification Failed',
-                response.message || 'Unknown error occurred. Please try again.',
+                '❌ Verification Failed',
+                `<div class="feedback-error-icon">✗</div>
+                ${response.message || 'Unknown error occurred.'}<br><br>
+                Please try again or contact support if the problem persists.`,
                 'error'
             );
         }
@@ -366,9 +448,17 @@ async function verifyAttendance() {
         showSection('welcome');
         
     } catch (error) {
+        playErrorSound();
         showDetailedMessage(
-            '✗ Error',
-            `Verification failed: ${error.message}\n\nPlease check your internet connection and try again.`,
+            '❌ Connection Error',
+            `<div class="feedback-error-icon">✗</div>
+            <strong>Unable to verify attendance</strong><br><br>
+            <strong>Error:</strong> ${error.message}<br><br>
+            <strong>Possible causes:</strong><br>
+            • No internet connection<br>
+            • Backend server is not running<br>
+            • Network firewall blocking request<br><br>
+            Please check your connection and try again.`,
             'error'
         );
         stopWebcam();
@@ -376,6 +466,7 @@ async function verifyAttendance() {
     } finally {
         verifyBtn.disabled = false;
         verifyBtn.textContent = 'Verify & Mark Attendance';
+        statusElement.textContent = 'Position your face in the frame and click Verify';
     }
 }
 
@@ -384,18 +475,120 @@ async function verifyAttendance() {
  */
 function showDetailedMessage(title, body, type = 'success') {
     const messageDiv = document.getElementById('message');
-    messageDiv.className = 'message message-' + type;
-    messageDiv.innerHTML = `
-        <div class="message-title">${title}</div>
-        <div class="message-body">${body.replace(/\n/g, '<br>')}</div>
-    `;
-    messageDiv.classList.remove('hidden');
     
-    // Auto-hide after 6 seconds for success/info, keep error visible
-    if (type !== 'error') {
+    // Fade out if already visible
+    if (!messageDiv.classList.contains('hidden')) {
+        messageDiv.style.opacity = '0';
         setTimeout(() => {
-            messageDiv.classList.add('hidden');
-        }, 6000);
+            updateMessageContent();
+        }, 200);
+    } else {
+        updateMessageContent();
+    }
+    
+    function updateMessageContent() {
+        messageDiv.className = 'message message-' + type;
+        messageDiv.innerHTML = `
+            <button class="message-close" onclick="document.getElementById('message').classList.add('hidden');">×</button>
+            <div class="message-title">${title}</div>
+            <div class="message-body">${body}</div>
+        `;
+        messageDiv.classList.remove('hidden');
+        messageDiv.style.display = 'block';
+        
+        // Trigger animation
+        setTimeout(() => {
+            messageDiv.style.opacity = '1';
+        }, 10);
+        
+        // Scroll to message
+        messageDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        
+        // Auto-hide after duration based on type
+        const duration = type === 'success' ? 8000 : type === 'info' ? 7000 : 0; // Keep errors visible
+        if (duration > 0) {
+            setTimeout(() => {
+                messageDiv.style.opacity = '0';
+                setTimeout(() => {
+                    messageDiv.classList.add('hidden');
+                }, 300);
+            }, duration);
+        }
+    }
+}
+
+/**
+ * Play success sound (simple beep)
+ */
+function playSuccessSound() {
+    if ('AudioContext' in window || 'webkitAudioContext' in window) {
+        try {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = 800;
+            oscillator.type = 'sine';
+            gainNode.gain.value = 0.1;
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.1);
+        } catch (e) {
+            console.log('Audio not available');
+        }
+    }
+}
+
+/**
+ * Play error sound
+ */
+function playErrorSound() {
+    if ('AudioContext' in window || 'webkitAudioContext' in window) {
+        try {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = 300;
+            oscillator.type = 'sine';
+            gainNode.gain.value = 0.1;
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.2);
+        } catch (e) {
+            console.log('Audio not available');
+        }
+    }
+}
+
+/**
+ * Play info sound
+ */
+function playInfoSound() {
+    if ('AudioContext' in window || 'webkitAudioContext' in window) {
+        try {
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioContext.createOscillator();
+            const gainNode = audioContext.createGain();
+            
+            oscillator.connect(gainNode);
+            gainNode.connect(audioContext.destination);
+            
+            oscillator.frequency.value = 600;
+            oscillator.type = 'sine';
+            gainNode.gain.value = 0.1;
+            
+            oscillator.start();
+            oscillator.stop(audioContext.currentTime + 0.15);
+        } catch (e) {
+            console.log('Audio not available');
+        }
     }
 }
 

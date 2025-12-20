@@ -4,8 +4,8 @@
  */
 
 const CONFIG = {
-    // Backend API URL
-    BACKEND_URL: 'http://localhost:8000',
+    // Backend API URL (use HTTPS for webcam access)
+    BACKEND_URL: 'https://localhost:8000',
     
     // Face registration settings
     NUM_REGISTRATION_IMAGES: 5,

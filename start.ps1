@@ -78,13 +78,22 @@ Write-Host ""
 Write-Host "Starting services..." -ForegroundColor Yellow
 Write-Host ""
 
+# Generate SSL certificates if not exists
+if (-not (Test-Path "certs\cert.pem")) {
+    Write-Host "Generating SSL certificates (required for webcam)..." -ForegroundColor Yellow
+    Push-Location certs
+    python generate_certs.py
+    Pop-Location
+    Write-Host "[OK] SSL certificates generated" -ForegroundColor Green
+}
+
 # Start backend in new window
 Write-Host "[*] Starting Backend (https://localhost:8000)..." -ForegroundColor Yellow
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PWD\backend'; .\venv\Scripts\Activate.ps1; python main.py" -WindowStyle Normal
 
 Start-Sleep -Seconds 3
 
-# Start frontend in new window
+# Start frontend in new window with SSL
 Write-Host "[*] Starting Frontend (https://localhost:8001)..." -ForegroundColor Yellow
 
 # Check if http-server is installed
@@ -94,7 +103,7 @@ if (-not $httpServerInstalled) {
     npm install -g http-server
 }
 
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PWD\frontend'; http-server -p 8001" -WindowStyle Normal
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$PWD\frontend'; http-server -p 8001 -S -C ..\certs\cert.pem -K ..\certs\key.pem" -WindowStyle Normal
 
 Start-Sleep -Seconds 2
 
@@ -104,9 +113,12 @@ Write-Host "[OK] Attendance System is Running!" -ForegroundColor Green
 Write-Host "=====================================" -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Access the system:" -ForegroundColor Cyan
-Write-Host "  Student Portal: http://localhost:8001" -ForegroundColor White
-Write-Host "  Admin Panel:    http://localhost:8001/admin.html" -ForegroundColor White
-Write-Host "  Backend API:    http://localhost:8000" -ForegroundColor White
+Write-Host "  Student Portal: https://localhost:8001" -ForegroundColor Cyan
+Write-Host "  Admin Panel:    https://localhost:8001/admin.html" -ForegroundColor Cyan
+Write-Host "  Backend API:    https://localhost:8000" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "⚠️  Your browser will show a security warning (self-signed certificate)" -ForegroundColor Yellow
+Write-Host "   Click 'Advanced' → 'Proceed to localhost (unsafe)' to continue" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "Press Ctrl+C in backend/frontend windows to stop" -ForegroundColor Gray
 Write-Host ""
