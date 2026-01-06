@@ -17,7 +17,7 @@ class Config:
     # Database Configuration
     DATABASE_URL = os.getenv(
         "DATABASE_URL",
-        "postgresql://postgres:password@localhost:5432/attendance_system"
+        "postgresql://postgres:12345678@localhost:5432/attendance_system"
     )
     
     # Admin Authentication

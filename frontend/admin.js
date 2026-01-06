@@ -162,19 +162,55 @@ async function refreshDashboard() {
 /**
  * Load statistics
  */
+/**
+ * Load statistics
+ */
 async function loadStatistics() {
     try {
-        const stats = await apiCall('/api/admin/stats', 'GET', null, {
+        // Get all students
+        const students = await apiCall('/api/admin/students', 'GET', null, {
             'Authorization': adminCredentials
         });
         
-        totalStudentsEl.textContent = stats.total_registered_students;
-        todayAttendanceEl.textContent = stats.today_attendance;
+        // Get all attendance records
+        const attendanceRecords = await apiCall('/api/admin/attendance', 'GET', null, {
+            'Authorization': adminCredentials
+        });
         
-        const rate = stats.total_registered_students > 0
-            ? (stats.today_attendance / stats.total_registered_students * 100).toFixed(1)
-            : 0;
-        attendanceRateEl.textContent = `${rate}%`;
+        // Total registered students
+        const totalStudents = students.length;
+        totalStudentsEl.textContent = totalStudents;
+        
+        // Calculate today's attendance (unique students who marked attendance today)
+        const today = new Date().toISOString().split('T')[0];
+        const studentsMarkedToday = new Set();
+        
+        attendanceRecords.forEach(record => {
+            if (record.last_marked_at) {
+                const markedDate = record.last_marked_at.split('T')[0];
+                if (markedDate === today) {
+                    studentsMarkedToday.add(record.student_id);
+                }
+            }
+        });
+        
+        const todayCount = studentsMarkedToday.size;
+        
+        // ✅ Display as "x/total students" format
+        todayAttendanceEl.textContent = `${todayCount}/${totalStudents}`;
+        
+        // ✅ Calculate average attendance percentage across all students and subjects
+        if (attendanceRecords.length > 0) {
+            const totalPercentage = attendanceRecords.reduce((sum, record) => {
+                return sum + (record.attendance_percentage || 0);
+            }, 0);
+            const avgRate = (totalPercentage / attendanceRecords.length).toFixed(1);
+            attendanceRateEl.textContent = `${avgRate}%`;
+        } else {
+            attendanceRateEl.textContent = '0.0%';
+        }
+        
+        console.log(`📊 Statistics: ${todayCount} out of ${totalStudents} students marked attendance today`);
         
     } catch (error) {
         console.error('Failed to load statistics:', error);
@@ -209,25 +245,38 @@ async function loadConfiguration() {
 /**
  * Load attendance records
  */
+/**
+ * Load attendance records
+ */
 async function loadAttendance() {
     const date = filterDate.value;
     const studentId = filterStudent.value.trim();
     
     try {
-        let endpoint = `/api/admin/attendance?date=${date}`;
-        if (studentId) {
-            endpoint += `&student_id=${studentId}`;
-        }
+        // ✅ Updated endpoint - remove date parameter since backend returns all records
+        let endpoint = `/api/admin/attendance`;
         
         const data = await apiCall(endpoint, 'GET', null, {
             'Authorization': adminCredentials
         });
         
-        displayAttendanceTable(data);
+        // ✅ Backend returns array directly, not wrapped in object
+        console.log('Attendance data received:', data);
+        console.log('Is array?', Array.isArray(data));
+        
+        // Filter on client side if needed
+        let filteredData = data;
+        if (studentId) {
+            filteredData = data.filter(record => 
+                record.student_id.toLowerCase().includes(studentId.toLowerCase())
+            );
+        }
+        
+        displayAttendanceTable(filteredData);
         
     } catch (error) {
         console.error('Failed to load attendance:', error);
-        attendanceTbody.innerHTML = '<tr><td colspan="3" class="text-center">Error loading data</td></tr>';
+        attendanceTbody.innerHTML = '<tr><td colspan="6" class="text-center">Error loading data</td></tr>';
     }
 }
 
@@ -235,20 +284,27 @@ async function loadAttendance() {
  * Display attendance table
  */
 function displayAttendanceTable(data) {
-    if (data.attendance.length === 0) {
-        attendanceTbody.innerHTML = '<tr><td colspan="3" class="text-center">No attendance records found</td></tr>';
+    // ✅ Add defensive checks
+    if (!Array.isArray(data)) {
+        console.error('Expected array but got:', typeof data, data);
+        attendanceTbody.innerHTML = '<tr><td colspan="6" class="text-center">Invalid data format</td></tr>';
         return;
     }
     
-    attendanceTbody.innerHTML = data.attendance.map(record => `
+    if (data.length === 0) {
+        attendanceTbody.innerHTML = '<tr><td colspan="6" class="text-center">No attendance records found</td></tr>';
+        return;
+    }
+    
+    // ✅ Updated to match backend response structure
+    attendanceTbody.innerHTML = data.map(record => `
         <tr>
-            <td>${record.student_id}</td>
-            <td>
-                <span class="status-badge ${record.present ? 'present' : 'absent'}">
-                    ${record.present ? '✓ Present' : '✗ Absent'}
-                </span>
-            </td>
-            <td>${record.marked_at ? formatDateTime(record.marked_at) : 'N/A'}</td>
+            <td>${record.student_id || 'N/A'}</td>
+            <td>${record.subject || 'N/A'}</td>
+            <td>${record.attendance_percentage?.toFixed(2) || '0.00'}%</td>
+            <td>${record.total_classes || 0}</td>
+            <td>${record.attended_classes || 0}</td>
+            <td>${record.last_marked_at ? formatDateTime(record.last_marked_at) : 'Never'}</td>
         </tr>
     `).join('');
 }
@@ -270,9 +326,49 @@ function formatDateTime(dateTimeStr) {
 /**
  * Export current view as CSV
  */
+/**
+ * Export current view as CSV
+ */
 async function exportCurrentView() {
-    const date = filterDate.value;
-    await exportDateRange(date, date);
+    try {
+        const data = await apiCall('/api/admin/attendance', 'GET', null, {
+            'Authorization': adminCredentials
+        });
+        
+        if (!Array.isArray(data) || data.length === 0) {
+            alert('No data to export');
+            return;
+        }
+        
+        // Convert to CSV
+        const headers = ['Student ID', 'Subject', 'Attendance %', 'Total Classes', 'Attended', 'Last Marked'];
+        const csvRows = [
+            headers.join(','),
+            ...data.map(record => [
+                record.student_id,
+                record.subject,
+                record.attendance_percentage?.toFixed(2) || '0.00',
+                record.total_classes || 0,
+                record.attended_classes || 0,
+                record.last_marked_at || 'Never'
+            ].join(','))
+        ];
+        
+        const csvContent = csvRows.join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `attendance_${new Date().toISOString().split('T')[0]}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+        
+    } catch (error) {
+        console.error('Export failed:', error);
+        alert('Failed to export data');
+    }
 }
 
 /**
@@ -318,4 +414,5 @@ async function exportDateRange(startDate = null, endDate = null) {
 }
 
 // Initialize when DOM is ready
+
 document.addEventListener('DOMContentLoaded', init);

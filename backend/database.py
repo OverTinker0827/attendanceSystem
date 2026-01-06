@@ -1,6 +1,12 @@
 """
 Database models and connection management for the attendance system.
 Uses SQLAlchemy ORM with PostgreSQL.
+
+New schema includes:
+- Students: student info with class and embedding
+- Classroom: classroom to IP mapping
+- ClassSchedule: class schedule with time slots
+- Attendance: attendance tracking by subject
 """
 
 from sqlalchemy import (
@@ -9,12 +15,12 @@ from sqlalchemy import (
     String,
     Integer,
     DateTime,
-    Date,
-    Boolean,
-    ARRAY,
+    Time,
     Float,
+    ARRAY,
     ForeignKey,
     UniqueConstraint,
+    PrimaryKeyConstraint,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
@@ -33,71 +39,111 @@ Base = declarative_base()
 
 class Student(Base):
     """
-    Students table - stores basic student information
+    Students table - stores student information
+    Fields match frontend expectations: student_id (usn), name, class, embedding
     """
     __tablename__ = "students"
-    
-    student_id = Column(String(20), primary_key=True)
+
+    student_id = Column(String(20), primary_key=True)  # Frontend uses 'student_id' (USN)
+    name = Column(String(255), nullable=True)
+    class_name = Column(String(50), nullable=True)  # DB column for class
+    embedding = Column(ARRAY(Float), nullable=True)  # Single embedding vector
     registered_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    name = Column(String(255), nullable=True)  # Optional: can be added later
-    
+
     # Relationships
-    embeddings = relationship("FaceEmbedding", back_populates="student", cascade="all, delete-orphan")
     attendance_records = relationship("Attendance", back_populates="student", cascade="all, delete-orphan")
-    
+
     def __repr__(self):
-        return f"<Student(student_id='{self.student_id}', registered_at='{self.registered_at}')>"
+        return f"<Student(student_id={self.student_id}, name={self.name}, class={self.class_name})>"
 
 
-class FaceEmbedding(Base):
+class Classroom(Base):
     """
-    Face embeddings table - stores the 5 embeddings per student
-    Each student has exactly 5 embeddings (embedding_index: 1-5)
+    Classroom table - maps classroom to IP address
     """
-    __tablename__ = "face_embeddings"
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    student_id = Column(String(20), ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
-    embedding_index = Column(Integer, nullable=False)  # 1, 2, 3, 4, or 5
-    embedding_vector = Column(ARRAY(Float), nullable=False)  # 512-dimensional vector
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    
+    __tablename__ = "classroom"
+
+    classroom = Column(String(50), primary_key=True)
+    ip = Column(String(50), nullable=False)
+
     # Relationships
-    student = relationship("Student", back_populates="embeddings")
-    
-    # Ensure unique (student_id, embedding_index) combination
-    __table_args__ = (
-        UniqueConstraint("student_id", "embedding_index", name="uq_student_embedding_index"),
-    )
-    
+    schedules = relationship("ClassSchedule", back_populates="classroom_ref", cascade="all, delete-orphan")
+
     def __repr__(self):
-        return f"<FaceEmbedding(student_id='{self.student_id}', index={self.embedding_index})>"
+        return f"<Classroom(classroom={self.classroom}, ip={self.ip})>"
+
+
+class ClassSchedule(Base):
+    """
+    Class schedule table - defines when and where classes occur
+    Composite primary key: (class_name, subject, start_time, end_time, classroom)
+    """
+    __tablename__ = "class_schedule"
+
+    class_name = Column(String(50), nullable=False)
+    subject = Column(String(100), nullable=False)
+    start_time = Column(Time, nullable=False)
+    end_time = Column(Time, nullable=False)
+    classroom = Column(String(50), ForeignKey("classroom.classroom", ondelete="CASCADE"), nullable=False)
+
+    # Relationships
+    classroom_ref = relationship("Classroom", back_populates="schedules")
+
+    # Composite primary key
+    __table_args__ = (
+        PrimaryKeyConstraint('class_name', 'subject', 'start_time', 'end_time', 'classroom'),
+    )
+
+    def __repr__(self):
+        return f"<ClassSchedule(class={self.class_name}, subject={self.subject}, classroom={self.classroom})>"
 
 
 class Attendance(Base):
     """
-    Attendance table - records attendance marks
-    Matrix-style representation: each row is a (student_id, date) pair
-    Unique constraint ensures one attendance record per student per day
+    Attendance table - tracks attendance percentage by student and subject
+    Composite primary key: (student_id, subject)
     """
     __tablename__ = "attendance"
-    
-    id = Column(Integer, primary_key=True, autoincrement=True)
+
     student_id = Column(String(20), ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
-    date = Column(Date, nullable=False)
-    marked_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    present = Column(Boolean, nullable=False, default=True)
-    
+    subject = Column(String(100), nullable=False)
+    attendance_percentage = Column(Float, nullable=False, default=0.0)
+    last_marked_at = Column(DateTime, nullable=True)  # Track last attendance mark
+    total_classes = Column(Integer, nullable=False, default=0)  # Track total classes
+    attended_classes = Column(Integer, nullable=False, default=0)  # Track attended classes
+
     # Relationships
     student = relationship("Student", back_populates="attendance_records")
-    
-    # Ensure unique (student_id, date) - one attendance per student per day
+
+    # Composite primary key
     __table_args__ = (
-        UniqueConstraint("student_id", "date", name="uq_student_date"),
+        PrimaryKeyConstraint('student_id', 'subject'),
     )
-    
+
     def __repr__(self):
-        return f"<Attendance(student_id='{self.student_id}', date='{self.date}', present={self.present})>"
+        return f"<Attendance(student_id={self.student_id}, subject={self.subject}, percentage={self.attendance_percentage})>"
+
+
+# Legacy tables for backward compatibility with existing frontend registration flow
+class FaceEmbedding(Base):
+    """
+    LEGACY: Face embeddings table - kept for backward compatibility
+    Registration API still stores multiple embeddings here
+    """
+    __tablename__ = "face_embeddings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    student_id = Column(String(20), ForeignKey("students.student_id", ondelete="CASCADE"), nullable=False)
+    embedding_index = Column(Integer, nullable=False)
+    embedding_vector = Column(ARRAY(Float), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("student_id", "embedding_index", name="uq_student_embedding_index"),
+    )
+
+    def __repr__(self):
+        return f"<FaceEmbedding(student_id={self.student_id}, index={self.embedding_index})>"
 
 
 def get_db():
@@ -131,6 +177,5 @@ def drop_all_tables():
 
 
 if __name__ == "__main__":
-    # When run directly, initialize the database
     print("Initializing database...")
     init_database()
